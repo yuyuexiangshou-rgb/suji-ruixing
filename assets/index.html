@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>杯序 · 配方练习</title>
+<link rel="stylesheet" href="style.css">
+<script defer src="public-data.js"></script>
+<script defer src="app.js"></script>
+</head>
+<body>
+<header class="top"><div class="brand"><span aria-hidden="true">≋</span> 杯序</div><span id="card-total" class="muted"></span></header>
+<main id="screen"></main>
+<div id="notice" role="status" hidden></div>
+<nav aria-label="主要功能">
+<button data-view="study" aria-current="page"><span aria-hidden="true">◇</span>练习</button>
+<button data-view="library"><span aria-hidden="true">▤</span>题库</button>
+<button data-view="mistakes"><span aria-hidden="true">↺</span>易错 <small id="wrong-count" hidden></small></button>
+</nav>
+</body>
+</html>

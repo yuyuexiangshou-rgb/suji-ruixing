@@ -1,0 +1,12 @@
+assets/video-data.js
+*.apk
+*.aab
+*.xlsx
+*.mp4
+*.p12
+*.jks
+*.keystore
+.env*
+node_modules/
+__pycache__/
+outputs/
