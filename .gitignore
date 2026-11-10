@@ -1,4 +1,6 @@
 assets/video-data.js
+assets/recipe-data.js
+assets/cleaning-data.js
 *.apk
 *.aab
 *.xlsx
@@ -10,3 +12,5 @@ assets/video-data.js
 node_modules/
 __pycache__/
 outputs/
+test-results/
+playwright-report/

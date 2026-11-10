@@ -53,6 +53,11 @@ progress::-webkit-progress-value { background:var(--blue); border-radius:5px; }
 .answer { margin-top:9px; border-top:1px dashed var(--line); padding-top:8px; }
 .answer ul,.answer ol { padding-left:23px; margin:7px 0; line-height:1.55; }
 .answer .muted,.answer .actions { margin-top:7px; }
+.written-review { display:grid; gap:9px; margin:13px 0 8px; }
+.written-review section { min-width:0; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+.written-review section:last-child { background:var(--tint); }
+.written-text { margin-top:7px; white-space:pre-wrap; line-height:1.55; }
+@media(min-width:560px) { .written-review { grid-template-columns:1fr 1fr; } }
 .feedback { margin:8px 0; font-weight:750; }
 .good { color:var(--green); }
 .bad { color:var(--rust); }

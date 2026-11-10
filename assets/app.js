@@ -3,12 +3,6 @@
 const screen = document.getElementById("screen");
 const oldKey = "cup-recall-mistakes-v1";
 const dataKey = "cup-recall-state-v2";
-const builtIn = new Map([
-  ...publicCards.map(card => [card.id, {
-    ...card, kind: "public",
-    items: card.ingredients.split(/、(?![^（(]*[）)])/),
-  }]),
-]);
 let state = {edits: {}, deleted: [], wrong: []};
 let storageProblem = false;
 try {
@@ -18,11 +12,18 @@ try {
     if (!parsed?.edits || !Array.isArray(parsed.deleted) || !Array.isArray(parsed.wrong)) {
       throw new Error("Invalid saved state");
     }
-    state = parsed;
-  } else {
-    const previous = JSON.parse(localStorage.getItem(oldKey) || "[]");
-    if (Array.isArray(previous)) state.wrong = previous.filter(id => builtIn.has(id));
+    const edits = Object.fromEntries(Object.entries(parsed.edits).filter(([id, card]) =>
+      card?.id === id && id.startsWith("user-") && card.kind === "custom",
+    ));
+    const exists = id => Object.prototype.hasOwnProperty.call(edits, id);
+    state = {
+      edits,
+      deleted: parsed.deleted.filter(exists),
+      wrong: parsed.wrong.filter(exists),
+    };
+    if (JSON.stringify(state) !== saved) localStorage.setItem(dataKey, JSON.stringify(state));
   }
+  localStorage.removeItem(oldKey);
 } catch {
   storageProblem = true;
 }
@@ -32,19 +33,16 @@ let pendingDelete = null;
 let bin = false;
 let round = null;
 let mode = "flash";
-let source = "all";
 let size = 5;
 let query = "";
-let librarySource = "all";
 let limit = 24;
 let noticeTimer;
 
 const modes = [
-  ["flash", "翻卡自测", "先回忆，再翻面给自己评分", "◇"],
+  ["flash", "默写自测", "写下配方，再对照答案自评", "◇"],
   ["choice", "原料辨认", "四选一，找出配方卡里出现的项目", "⊙"],
   ["order", "步骤排序", "点选三个步骤，排回配方卡的顺序", "≡"],
 ];
-const sources = [["all", "全部"], ["public", "公开原料"], ["custom", "我维护的"]];
 
 function el(tag, text, cls) {
   const node = document.createElement(tag);
@@ -91,19 +89,13 @@ function save(next) {
 }
 
 function lookupCard(id) {
-  return state.edits[id] || builtIn.get(id);
+  return state.edits[id];
 }
 
 function catalog() {
-  return [...new Set([...builtIn.keys(), ...Object.keys(state.edits)])]
+  return Object.keys(state.edits)
     .filter(id => !state.deleted.includes(id))
     .map(lookupCard);
-}
-
-function inSource(card, filter) {
-  if (filter === "all") return true;
-  if (filter === "custom") return Boolean(state.edits[card.id]);
-  return card.kind === filter;
 }
 
 function wrongCards() {
@@ -166,20 +158,11 @@ function makeQuestions(cards, selectedMode) {
 function start(selectedMode, cards, count = size) {
   const questions = makeQuestions(shuffled(cards), selectedMode).slice(0, count);
   if (!questions.length) {
-    notify("此范围没有符合该题型的卡片，请换个题型或来源。");
+    notify("题库里没有适合这种题型的卡片，请补充卡片或切换题型。");
     return;
   }
-  round = {mode: selectedMode, questions, index: 0, correct: 0, revealed: false, picked: [], result: null};
+  round = {mode: selectedMode, questions, index: 0, correct: 0, writtenAnswer: "", picked: [], result: null};
   render(true);
-}
-
-function labelFor(card) {
-  if (state.edits[card.id]) return card.kind === "custom" ? "自建卡" : "个人修订";
-  return card.evidence;
-}
-
-function tag(card) {
-  return el("span", labelFor(card), "tag " + (state.edits[card.id] ? "custom" : card.kind));
 }
 
 function answerBlock(card) {
@@ -188,23 +171,6 @@ function answerBlock(card) {
   card.items.forEach(item => list.append(el("li", item)));
   body.append(list);
   if (card.note) body.append(el("p", card.note, "muted"));
-  if (state.edits[card.id] && card.kind !== "custom") {
-    body.append(el("p", "显示你修改后的内容，原始资料仅供对照。", "muted"));
-  }
-  if (card.url) {
-    const line = el("p", null, "muted");
-    const link = el("a", "打开原始资料");
-    link.href = card.url;
-    line.append(link);
-    if (card.secondary) {
-      const secondary = el("a", "补充来源");
-      secondary.href = card.secondary;
-      line.append(" · ", secondary);
-    }
-    body.append(line);
-    if (!state.edits[card.id] && card.options) body.append(el("p", "公开规格 · " + card.options, "muted"));
-    if (!state.edits[card.id] && card.recommended) body.append(el("p", "官网推荐 · " + card.recommended, "muted"));
-  }
   return body;
 }
 
@@ -224,7 +190,7 @@ function advance() {
   round.index++;
   round.picked = [];
   round.result = null;
-  round.revealed = false;
+  round.writtenAnswer = "";
   render(true);
 }
 
@@ -252,13 +218,31 @@ function renderRound() {
   progress.setAttribute("aria-label", "本轮进度");
   screen.append(bar, progress);
   const ticket = el("article", null, "ticket");
-  ticket.append(tag(card), el("h2", card.name));
-  if (card.variant || card.category) ticket.append(el("p", card.variant || card.category, "muted"));
+  ticket.append(el("h2", card.name));
+  if (card.variant) ticket.append(el("p", card.variant, "muted"));
   screen.append(ticket);
 
-  if (round.mode === "flash" && !round.revealed) {
-    ticket.append(el("p", "先在心里过一遍这张卡的配方。", "prompt"),
-      button("显示答案", () => { round.revealed = true; render(); }, "primary full"));
+  if (round.mode === "flash" && !round.writtenAnswer) {
+    const form = el("form");
+    const input = el("textarea");
+    input.required = true;
+    input.maxLength = 1800;
+    input.rows = 5;
+    input.placeholder = "写下记得的原料、用量和步骤。";
+    const show = el("button", "显示答案", "primary full");
+    show.type = "submit";
+    show.disabled = true;
+    input.addEventListener("input", () => { show.disabled = !input.value.trim(); });
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      const writtenAnswer = input.value.trim();
+      if (!writtenAnswer) return;
+      round.writtenAnswer = writtenAnswer;
+      render();
+      document.getElementById("reference-answer-title")?.focus();
+    });
+    form.append(field("填写你的答案", input), show);
+    ticket.append(form);
     return;
   }
   if (round.mode === "flash" || round.result !== null) {
@@ -267,12 +251,22 @@ function renderRound() {
       ticket.append(el("p", (round.result ? "答对了" : "已加入易错卡") + " · " + solution,
         "feedback " + (round.result ? "good" : "bad")));
     }
-    ticket.append(answerBlock(card));
     const actions = el("div", null, "actions");
     if (round.mode === "flash") {
-      actions.append(button("没记住", () => record(false), "secondary"),
-        button("记住了", () => record(true), "primary"));
+      const review = el("div", null, "written-review");
+      const written = el("section");
+      written.append(el("h3", "你的答案"), el("p", round.writtenAnswer, "written-text"));
+      const reference = el("section");
+      const heading = el("h3", "参考答案");
+      heading.id = "reference-answer-title";
+      heading.tabIndex = -1;
+      reference.append(heading, answerBlock(card));
+      review.append(written, reference);
+      ticket.append(review, el("p", "对照后给自己判分。", "muted prompt"));
+      actions.append(button("答错了", () => record(false), "secondary"),
+        button("答对了", () => record(true), "primary"));
     } else {
+      ticket.append(answerBlock(card));
       actions.append(button("下一题", advance, "primary"));
     }
     actions.append(button("修改这张", () => openEditor(card)));
@@ -313,8 +307,17 @@ function renderRound() {
 
 function renderStudy() {
   const hero = el("section", null, "hero");
-  hero.append(el("h1", "配方练习"), el("p", "选一种方式，开一轮。"));
-  screen.append(hero, el("h3", "训练方式", "section"));
+  hero.append(el("h1", "配方练习"));
+  screen.append(hero);
+  if (!catalog().length) {
+    const empty = el("article", null, "ticket");
+    empty.append(el("h2", "题库暂为空"), el("p", "添加一张新配方卡后即可开始练习。", "prompt"),
+      button("新建配方卡", () => { view = "library"; openEditor(); }, "primary full"));
+    screen.append(empty);
+    return;
+  }
+  hero.append(el("p", "选一种方式，开一轮。"));
+  screen.append(el("h3", "训练方式", "section"));
   const grid = el("div", null, "mode-grid");
   modes.forEach(([key, title, description, icon]) => {
     const control = button(null, () => { mode = key; render(); }, "mode");
@@ -326,11 +329,10 @@ function renderStudy() {
     control.append(mark, copy);
     grid.append(control);
   });
-  screen.append(grid, el("h3", "练习范围", "section"),
-    choices(sources, source, key => { source = key; render(); }, "练习范围"),
+  screen.append(grid,
     el("h3", "每轮题量", "section"),
     choices([[5,"5 题"], [10,"10 题"], [20,"20 题"]], size, key => { size = key; render(); }, "每轮题量"),
-    button("开始练习", () => start(mode, catalog().filter(card => inSource(card, source))), "primary full"));
+    button("开始练习", () => start(mode, catalog()), "primary full"));
 }
 
 function field(label, control) {
@@ -375,7 +377,7 @@ function renderEditor() {
   check.append(ordered, el("span", "这些是有顺序的制作步骤"));
   const note = el("input");
   note.maxLength = 180;
-  note.placeholder = "例如：本店现行 SOP、2026 年 11 月核对";
+  note.placeholder = "例如：练习版，用量以自己的记录为准";
   note.value = card?.note || "";
   const submit = el("button", "保存配方", "primary full");
   submit.type = "submit";
@@ -397,7 +399,6 @@ function renderEditor() {
     round = null;
     view = "library";
     query = saved.name;
-    librarySource = "all";
     render(true);
     notify("配方已保存。");
   });
@@ -448,14 +449,13 @@ function renderLibrary() {
   const list = el("div");
   const show = () => {
     const words = query.toLowerCase().trim().split(/\s+/);
-    const matches = catalog().filter(card => inSource(card, librarySource) && words.every(word =>
-      [card.name, card.variant, card.category, ...card.items].join(" ").toLowerCase().includes(word),
+    const matches = catalog().filter(card => words.every(word =>
+      [card.name, card.variant, ...card.items].join(" ").toLowerCase().includes(word),
     ));
     list.replaceChildren(el("p", matches.length ? "找到 " + matches.length + " 张卡" : "没有找到卡片，试试更短的关键词。", "muted section"));
     matches.slice(0, limit).forEach(card => {
       const entry = el("details");
       const title = el("summary", card.name + (card.variant ? " · " + card.variant : ""));
-      title.append(tag(card));
       entry.append(title);
       entry.addEventListener("toggle", () => {
         if (!entry.open || entry.children.length > 1) return;
@@ -471,11 +471,7 @@ function renderLibrary() {
     if (matches.length > limit) list.append(button("显示更多", () => { limit += 24; show(); }, "ghost full"));
   };
   search.addEventListener("input", () => { query = search.value; limit = 24; show(); });
-  screen.append(bar, field("搜索题库", search), choices(sources, librarySource, key => {
-    librarySource = key;
-    limit = 24;
-    render();
-  }, "题库来源"), list);
+  screen.append(bar, field("搜索题库", search), list);
   show();
 }
 
@@ -487,7 +483,7 @@ function renderMistakes() {
     screen.append(button("去练习", () => setView("study"), "primary full"));
     return;
   }
-  screen.append(button("翻卡复习", () => start("flash", cards), "primary full"));
+  screen.append(button("默写复习", () => start("flash", cards), "primary full"));
   modes.slice(1).forEach(([key, title]) =>
     screen.append(button(title, () => start(key, cards), "secondary full")));
   cards.forEach(card => {
@@ -546,4 +542,4 @@ document.querySelectorAll("[data-view]").forEach(control =>
   }),
 );
 render();
-if (storageProblem) notify("历史记录读取失败，当前显示内置题库。");
+if (storageProblem) notify("历史记录读取失败，请检查应用存储。");
